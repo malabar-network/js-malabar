@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { ethereumAddressToBuffer } from './util'
+import { EthereumAddress } from './ethereum-address'
 
 const CURRENT_DIFFICULTY = 1
 
@@ -10,9 +10,9 @@ const CURRENT_DIFFICULTY = 1
  * @returns 256 bit long buffer
  */
 export function solveProofOfEntry(
-  address: string
+  address: EthereumAddress
 ): { poe: Buffer; nonce: number } {
-  const addressBuffer = ethereumAddressToBuffer(address)
+  const addressBuffer = address.toBuffer()
 
   for (let nonce = 0; ; nonce++) {
     const poe = hashProofOfEntry(nonce, addressBuffer)
@@ -30,10 +30,10 @@ export function solveProofOfEntry(
  */
 export function verifyProofOfEntry(
   poe: Buffer,
-  address: string,
+  address: EthereumAddress,
   nonce: number
 ): boolean {
-  const addressBuffer = ethereumAddressToBuffer(address)
+  const addressBuffer = address.toBuffer()
   const poeCheck = hashProofOfEntry(nonce, addressBuffer)
 
   return poeCheck.equals(poe) && verifyProofOfEntryDifficulty(poe)

@@ -1,23 +1,24 @@
 import BufferList from 'bl'
 import crypto from 'crypto'
-import { bufferToInt, ethereumAddressToBuffer, intToBuffer } from './util'
+import { EthereumAddress } from '../ethereum-address'
+import { bufferToInt, intToBuffer } from '../util'
 
-export interface NewMessage {
-  to: string
-  from: string
+export interface NewPayloadMessage {
+  to: EthereumAddress
+  from: EthereumAddress
   poe: Buffer
   poeNonce: number
   maxGas: number
   body: Buffer
 }
 
-export type Message = NewMessage & {
+export type PayloadMessage = NewPayloadMessage & {
   time: Date
   usedGas: number
   messageId: Buffer
 }
 
-export function expandMessage(partialMsg: NewMessage): Message {
+export function expandMessage(partialMsg: NewPayloadMessage): PayloadMessage {
   const msg = {
     ...partialMsg,
     time: new Date(),
@@ -25,8 +26,8 @@ export function expandMessage(partialMsg: NewMessage): Message {
   }
 
   const sha256 = crypto.createHash('sha256')
-  sha256.update(msg.from)
-  sha256.update(msg.to)
+  sha256.update(msg.from.toBuffer())
+  sha256.update(msg.to.toBuffer())
   sha256.update(msg.poe)
   sha256.update(intToBuffer(4, msg.poeNonce))
   sha256.update(intToBuffer(8, Math.floor(msg.time.getTime() / 1000)))
@@ -39,12 +40,12 @@ export function expandMessage(partialMsg: NewMessage): Message {
   }
 }
 
-export function messageToBuffer(msg: Message): BufferList {
+export function messageToBuffer(msg: PayloadMessage): BufferList {
   let data = new BufferList()
 
   // The following order, key names, and sizes are taken from the spec
-  data.append(ethereumAddressToBuffer(msg.to)) // To - 20 bytes
-  data.append(ethereumAddressToBuffer(msg.from)) // From - 20 bytes
+  data.append(msg.to.toBuffer()) // To - 20 bytes
+  data.append(msg.from.toBuffer()) // From - 20 bytes
   data.append(msg.poe) // Proof of Entry - 32 bytes
   data.append(intToBuffer(4, msg.poeNonce)) // Proof of Entry Nonce - 4 bytes
   data.append(intToBuffer(8, Math.floor(msg.time.getTime() / 1000))) // Time - 8 bytes
@@ -56,11 +57,11 @@ export function messageToBuffer(msg: Message): BufferList {
   return data
 }
 
-export function bufferToMessage(buf: BufferList): Message {
+export function bufferToMessage(buf: BufferList): PayloadMessage {
   let i = 0
 
-  const to = buf.slice(i, (i += 20)).toString('hex') // To - 20 bytes
-  const from = buf.slice(i, (i += 20)).toString('hex') // From - 20 bytes
+  const to = new EthereumAddress(buf.slice(i, (i += 20))) // To - 20 bytes
+  const from = new EthereumAddress(buf.slice(i, (i += 20))) // From - 20 bytes
   const poe = buf.slice(i, (i += 32)) // Proof of Entry - 32 bytes
   const poeNonce = buf.readUInt32BE(i) // Proof of Entry Nonce - 4 bytes
   i += 4

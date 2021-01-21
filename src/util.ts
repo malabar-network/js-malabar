@@ -1,3 +1,5 @@
+import { PayloadMessage, RouteMessage } from './message'
+
 function splitu256(num: bigint): bigint[] {
   const high = num >> BigInt(128)
   const low = num - (high << BigInt(128))
@@ -38,18 +40,32 @@ export function bufferToInt(buf: Buffer): number {
   return parseInt(buf.toString('hex'), 16)
 }
 
-export function ethereumAddressToBuffer(address: string) {
-  if (address.substring(0, 2) === '0x') {
-    return Buffer.from(address.substring(2), 'hex')
-  }
-
-  return Buffer.from(address, 'hex')
-}
-
 export function pluralize(count: number, word: string) {
   return `${word}${count === 1 ? '' : 's'}`
 }
 
 export function pluralizeWithCount(count: number, word: string) {
   return `${count} ${pluralize(count, word)}`
+}
+
+interface FindAsyncPredicate<T> {
+  (val: T): Promise<boolean>
+}
+
+export async function findAsync<T>(arr: T[], predicate: FindAsyncPredicate<T>) {
+  const index = (await Promise.all(arr.map(predicate))).findIndex(Boolean)
+  return arr[index]
+}
+
+export function messageToRouteMessage(msg: PayloadMessage): RouteMessage {
+  return {
+    messageId: msg.messageId.toString('hex'),
+    to: msg.to,
+    from: msg.from,
+    gasLimit: msg.maxGas,
+    gasUsed: 0,
+    messageSize: 1000, // TODO: proper message size
+    ttl: 10, // TODO: configurable TTL
+    transportNodes: [],
+  }
 }

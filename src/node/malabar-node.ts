@@ -3,19 +3,28 @@ import { Signer } from 'ethers'
 import { EventEmitter } from 'events'
 import pipe from 'it-pipe'
 import libp2p, { Connection, MuxedStream } from 'libp2p'
-import BOOSTRAP from 'libp2p-bootstrap'
-import DHT from 'libp2p-kad-dht'
-import MPLEX from 'libp2p-mplex'
+import Bootstrap from 'libp2p-bootstrap'
+import KadDHT from 'libp2p-kad-dht'
+import Mplex from 'libp2p-mplex'
 import { NOISE } from 'libp2p-noise'
-import TCP from 'libp2p-tcp'
+import Tcp from 'libp2p-tcp'
 import PeerId from 'peer-id'
-import { bufferToMessage, Message, messageToBuffer } from '../message'
+import { EthereumAddress } from '../ethereum-address'
 import {
+  bufferToMessage,
+  bufferToRouteAckMessage,
   bufferToRouteMessage,
+  expandMessage,
+  messageToBuffer,
+  NewPayloadMessage,
+  PayloadMessage,
+  RouteAckMessage,
+  routeAckMessageToBuffer,
   RouteMessage,
   routeMessageToBuffer,
-} from '../route-message'
-import { BootstrapNodeConfig } from './bootstrap-node'
+} from '../message'
+import { messageToRouteMessage } from '../util'
+import { BaseNodeConfig } from './config'
 
 interface Libp2pRequest {
   stream: MuxedStream
@@ -23,9 +32,12 @@ interface Libp2pRequest {
 }
 
 const PROTOCOL_MALABAR_ROUTE = '/malabar/route/0.1.0'
-const PROTOCOL_MALABAR_MESSAGE = '/malabar/message/0.1.0'
+const PROTOCOL_MALABAR_ROUTE_ACK = '/malabar/route-ack/0.1.0'
+const PROTOCOL_MALABAR_PAYLOAD = '/malabar/payload/0.1.0'
+const MIN_CONNECTIONS = 5
+const ALTERNATIVE_ROUTE_TIMEOUT = 5e3
 
-export type NodeConfig = BootstrapNodeConfig & {
+export type NodeConfig = BaseNodeConfig & {
   bootstrapAddresses: string[]
   signer: Signer
 }
@@ -33,7 +45,7 @@ export type NodeConfig = BootstrapNodeConfig & {
 interface MalabarNodeEvents {
   ready: () => void
   connection: (remoteAddress: string) => void
-  messageTransport: (remotePeer: PeerId) => void
+  routeMessages: (messages: RouteMessage[]) => void
 }
 
 // From https://stackoverflow.com/a/61609010
@@ -55,7 +67,13 @@ export class MalabarNode extends EventEmitter {
   private ready = false
   private signer: Signer
   /** Message Id --> Origin Peer Id */
-  private origins: Map<string, PeerId> = new Map()
+  private routeMessageOrigins: Record<string, PeerId> = {}
+  /** Message Id --> Origin Peer Id */
+  private routeAckMessageOrigins: Record<string, PeerId> = {}
+  /** Message Id -> Array of route messages */
+  private routeMessages: Record<string, RouteMessage[]> = {}
+  /** Message Id -> PayloadMessage */
+  private outgoingMessages: Record<string, PayloadMessage> = {}
 
   private constructor(node: libp2p, signer: Signer) {
     super()
@@ -63,10 +81,17 @@ export class MalabarNode extends EventEmitter {
     this.node = node
     this.signer = signer
 
-    node.handle(PROTOCOL_MALABAR_MESSAGE, this.messageRequestHandler.bind(this))
+    node.handle(
+      PROTOCOL_MALABAR_PAYLOAD,
+      this.payloadMessageRequestHandler.bind(this)
+    )
     node.handle(
       PROTOCOL_MALABAR_ROUTE,
       this.routeMessageRequestHandler.bind(this)
+    )
+    node.handle(
+      PROTOCOL_MALABAR_ROUTE_ACK,
+      this.routeAckMessageRequestHandler.bind(this)
     )
 
     node.connectionManager.on('peer:connect', this.connectionHandler.bind(this))
@@ -79,23 +104,23 @@ export class MalabarNode extends EventEmitter {
 
     const node = await libp2p.create({
       modules: {
-        transport: [TCP as any],
+        transport: [Tcp as any],
         connEncryption: [NOISE],
-        streamMuxer: [MPLEX as any],
-        dht: DHT,
-        peerDiscovery: [BOOSTRAP],
+        streamMuxer: [Mplex as any],
+        dht: KadDHT,
+        peerDiscovery: [Bootstrap],
       } as any,
       addresses: { listen: config.listenAddresses },
       peerId,
       config: {
         dht: {
-          kBucketSize: 20,
+          kBucketSize: 10,
           enabled: true,
           randomWalk: {
             enabled: true,
-            interval: 300e3, // 300 secondss
+            interval: 300e3, // 300 seconds
             timeout: 10e3, // 10 seconds,
-            delay: 10e3, // 10 seconds
+            delay: 1e3, // 1 seconds
           },
         },
         peerDiscovery: {
@@ -126,42 +151,20 @@ export class MalabarNode extends EventEmitter {
 
   /**
    * Send a message
-   * @param msg the message
-   * @param exclude peer ids not to send message to
    */
-  async sendMessage(msg: Message, exclude: PeerId[] = []) {
-    const buffer = messageToBuffer(msg)
+  async sendMessage(newMsg: NewPayloadMessage, exclude: PeerId[] = []) {
+    const msg = expandMessage(newMsg)
+    const routeMsg = messageToRouteMessage(msg)
+    this.sendRouteMessage(routeMsg)
 
-    this.getAllMalabarConnections()
-      .filter(
-        (connection) =>
-          !exclude.some((peer) => connection.remotePeer.equals(peer))
-      )
-      .forEach(async (connection) => {
-        if (Math.random() > 0.25) {
-          return
-        }
-
-        try {
-          const { stream } = await this.node.dialProtocol(
-            connection.remoteAddr,
-            PROTOCOL_MALABAR_MESSAGE
-          )
-
-          pipe([buffer], stream)
-        } catch (e) {
-          // The peer node may not support the malabar protocol
-          // We can ignore the error
-        }
-      })
+    this.outgoingMessages[msg.messageId.toString('hex')] = msg
   }
 
   /**
    * Gets the Ethereum address of the node
-   * @returns string representation of address
    */
-  async getAddress(): Promise<string> {
-    return await this.signer.getAddress()
+  async getEthereumAddress(): Promise<EthereumAddress> {
+    return new EthereumAddress(await this.signer.getAddress())
   }
 
   /**
@@ -186,15 +189,6 @@ export class MalabarNode extends EventEmitter {
     return this.ready
   }
 
-  async sendRouteMessage(msg: RouteMessage, exclude: PeerId[] = []) {
-    const data = routeMessageToBuffer(msg)
-
-    this.getAllMalabarConnections().filter(
-      (connection) =>
-        !exclude.some((peer) => connection.remotePeer.equals(peer))
-    )
-  }
-
   /**
    * Get peers that support the Malabar protocol
    */
@@ -210,50 +204,110 @@ export class MalabarNode extends EventEmitter {
   private async connectionHandler(connection: Connection) {
     this.emit('connection', connection.remoteAddr.toString())
 
-    if (!this.ready && this.node.connections.size > 0) {
+    if (!this.ready && this.node.connections.size >= MIN_CONNECTIONS) {
       this.ready = true
 
       this.emit('ready')
     }
   }
 
+  private calculateGasUsed(msg: RouteMessage): number {
+    return msg.messageSize
+  }
+
   /**
-   * Malabar Messages
-   * Protocol: /malabar/message/x.x.x
+   * Payload Messages
+   * Protocol: /malabar/payload/x.x.x
    */
+
+  /**
+   * Sends a route acknowledgement message to a single peer
+   * @param msg message to send
+   * @param peer peer id to send the message to
+   */
+  async sendPayloadMessage(msg: PayloadMessage, peer: PeerId) {
+    const data = messageToBuffer(msg)
+
+    try {
+      const { stream } = await this.node.dialProtocol(
+        peer,
+        PROTOCOL_MALABAR_PAYLOAD
+      )
+
+      pipe([data], stream)
+    } catch (e) {
+      // The peer node may not support the malabar protocol
+      // We can ignore the error
+    }
+  }
 
   /**
    * Handles an incoming message
    */
-  private async messageRequestHandler({ stream, connection }: Libp2pRequest) {
+  private async payloadMessageRequestHandler({
+    stream,
+    connection,
+  }: Libp2pRequest) {
     pipe(stream, async (source) => {
       for await (const data of source) {
         if (data instanceof BufferList) {
-          this.handleMessage(bufferToMessage(data), connection)
+          this.handlePayloadMessage(bufferToMessage(data), connection)
         } else {
           const list = new BufferList()
           list.append(data as Buffer)
-          this.handleMessage(bufferToMessage(list), connection)
+          this.handlePayloadMessage(bufferToMessage(list), connection)
         }
       }
     })
   }
 
-  private async handleMessage(msg: Message, connection: Connection) {
-    if (this.origins.has(msg.messageId.toString('hex'))) {
+  private async handlePayloadMessage(
+    msg: PayloadMessage,
+    connection: Connection
+  ) {
+    if (msg.to.equals(await this.getEthereumAddress())) {
+      console.log(msg.body.toString('ascii'))
       return
     }
 
-    this.emit('messageTransport', connection.remotePeer)
+    const messageId = msg.messageId.toString('hex')
 
-    this.origins.set(msg.messageId.toString('hex'), connection.remotePeer)
-    await this.sendMessage(msg, [connection.remotePeer])
+    await this.sendPayloadMessage(msg, this.routeAckMessageOrigins[messageId])
+    delete this.routeAckMessageOrigins[messageId]
   }
 
   /**
-   * Malabar Route Finding
+   * Route Messages
    * Protocol: /malabar/route/x.x.x
    */
+
+  /**
+   * Sends a route message to all peers
+   * @param msg route message to send
+   * @param exclude peers who should not be send the message
+   */
+  sendRouteMessage(msg: RouteMessage, exclude: PeerId[] = []) {
+    const data = routeMessageToBuffer(msg)
+
+    this.getAllMalabarConnections()
+      .filter(
+        (connection) =>
+          !exclude.some((peer) => connection.remotePeer.equals(peer))
+      )
+      .forEach(async (connection) => {
+        try {
+          const { stream } = await this.node.dialProtocol(
+            connection.remotePeer,
+            PROTOCOL_MALABAR_ROUTE
+          )
+
+          pipe([data], stream)
+        } catch (e) {
+          // The peer node may not support the malabar protocol
+          // We can ignore the error
+        }
+      })
+  }
 
   /**
    * Handles an incoming message
@@ -276,6 +330,126 @@ export class MalabarNode extends EventEmitter {
   }
 
   private async handleRouteMessage(msg: RouteMessage, connection: Connection) {
-    console.log('Received route message')
+    if (msg.to.equals(await this.getEthereumAddress())) {
+      if (!this.routeMessages[msg.messageId]) {
+        this.routeMessages[msg.messageId] = []
+      }
+
+      this.routeMessages[msg.messageId].push(msg)
+      const originalLength = this.routeMessages[msg.messageId].length
+
+      setTimeout(() => {
+        if (this.routeMessages[msg.messageId].length !== originalLength) return
+
+        const routeMessages = [...this.routeMessages[msg.messageId]]
+        delete this.routeMessages[msg.messageId]
+
+        this.handleRouteMessagesGroup(routeMessages)
+      }, ALTERNATIVE_ROUTE_TIMEOUT)
+    } else {
+      if (Object.keys(this.routeMessageOrigins).includes(msg.messageId)) {
+        return
+      }
+
+      const gasUsed = this.calculateGasUsed(msg)
+      msg.gasUsed += gasUsed
+
+      if (msg.gasUsed > msg.gasLimit) {
+        return
+      }
+
+      msg.transportNodes.push({
+        gasUsed,
+        address: new EthereumAddress(await this.signer.getAddress()),
+      })
+    }
+
+    this.routeMessageOrigins[msg.messageId] = connection.remotePeer
+
+    msg.ttl--
+    if (msg.ttl === 0) return
+
+    this.sendRouteMessage(msg, [connection.remotePeer])
+  }
+
+  private async handleRouteMessagesGroup(messages: RouteMessage[]) {
+    this.emit('routeMessages', messages)
+
+    const messageId = messages[0].messageId
+    const cheapestMessage = messages.sort((a, b) => a.gasUsed - b.gasUsed)[0]
+
+    await this.sendRouteAckMessage(
+      {
+        messageId,
+        transportNodes: cheapestMessage.transportNodes,
+      },
+      this.routeMessageOrigins[messageId]
+    )
+  }
+
+  /**
+   * Route Acknowledgement Messages
+   * Protocol: /malabar/route-ack/x.x.x
+   */
+
+  /**
+   * Sends a route acknowledgement message to a single peer
+   * @param msg message to send
+   * @param peer peer id to send the message to
+   */
+  async sendRouteAckMessage(msg: RouteAckMessage, peer: PeerId) {
+    const data = routeAckMessageToBuffer(msg)
+
+    try {
+      const { stream } = await this.node.dialProtocol(
+        peer,
+        PROTOCOL_MALABAR_ROUTE_ACK
+      )
+
+      pipe([data], stream)
+    } catch (e) {
+      // The peer node may not support the malabar protocol
+      // We can ignore the error
+    }
+  }
+
+  /**
+   * Handles an incoming message
+   */
+  private async routeAckMessageRequestHandler({
+    stream,
+    connection,
+  }: Libp2pRequest) {
+    pipe(stream, async (source) => {
+      for await (const data of source) {
+        if (data instanceof BufferList) {
+          this.handleRouteAckMessage(bufferToRouteAckMessage(data), connection)
+        } else {
+          const list = new BufferList()
+          list.append(data as Buffer)
+          this.handleRouteAckMessage(bufferToRouteAckMessage(list), connection)
+        }
+      }
+    })
+  }
+
+  private async handleRouteAckMessage(
+    msg: RouteAckMessage,
+    connection: Connection
+  ) {
+    if (Object.keys(this.outgoingMessages).includes(msg.messageId)) {
+      this.sendPayloadMessage(
+        this.outgoingMessages[msg.messageId],
+        connection.remotePeer
+      )
+
+      delete this.outgoingMessages[msg.messageId]
+      // TODO: obscure that this was the sender node, perhaps forward the ACK to a random peer?
+      return
+    }
+
+    this.routeAckMessageOrigins[msg.messageId] = connection.remotePeer
+    this.sendRouteAckMessage(msg, this.routeMessageOrigins[msg.messageId])
+    delete this.routeMessageOrigins[msg.messageId]
   }
 }

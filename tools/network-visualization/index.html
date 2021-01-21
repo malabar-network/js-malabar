@@ -4,20 +4,151 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://d3js.org/d3.v4.min.js"></script>
   <title>Malabar Network Visualization</title>
-  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <style>
-    #network-graph {
-      width: 100vw;
-      height: 100vh;
-    }
-  </style>
 </head>
 
 <body>
-  <div id="network-graph"></div>
+  <canvas width="960" height="600"></canvas>
 
-  <script type="text/javascript" src="index.js"></script>
+  <input id="highlight-input" type="text" placeholder="Peer ID" />
+  <button onclick="onHighlight()">Highlight</button>
+  <button onclick="onClearHighlight()">Clear Highlight</button>
+  <p id="nodes"></p>
+
+  <script>
+    const NODE_COLOR = 'black'
+    const EDGE_COLOR = 'grey'
+    const HIGHLIGHT_NODE_COLOR = 'orange'
+    const HIGHLIGHT_NODE_PRIMARY_COLOR = 'red'
+    const HIGHLIGHT_EDGE_COLOR = 'orange'
+
+    function onHighlight() {
+      window.highlight = document.querySelector('#highlight-input').value
+    }
+
+    function onClearHighlight() {
+      window.highlight = null
+    }
+
+    if (!location.search) {
+      location.search = '?data=network'
+    }
+
+    const filename = location.search.split('=')[1]
+    const url = `data/${filename}.json`
+
+    const canvas = document.querySelector('canvas'),
+      context = canvas.getContext('2d'),
+      width = canvas.width,
+      height = canvas.height
+
+    const simulation = d3
+      .forceSimulation()
+      .force(
+        'link',
+        d3.forceLink().id((node) => node.id)
+      )
+      .force('charge', d3.forceManyBody())
+      .force('center', d3.forceCenter(width / 2, height / 2))
+
+    d3.json(url, function (error, graph) {
+      if (error) throw error
+
+      document.querySelector('#nodes').innerHTML = graph
+        .nodes
+        .map(({ id, label }) => `${label} (${id})`).join('<br>')
+
+      simulation.nodes(graph.nodes).on('tick', onTick)
+
+      simulation.force('link').links(graph.links)
+
+      d3.select(canvas).call(
+        d3
+          .drag()
+          .container(canvas)
+          .subject(dragsubject)
+          .on('start', dragstarted)
+          .on('drag', dragged)
+          .on('end', dragended)
+      )
+
+      function onTick() {
+        context.clearRect(0, 0, width, height)
+
+        graph.links.forEach(({ source, target }) => {
+          context.beginPath()
+          context.strokeStyle = [source.id, target.id].includes(window.highlight) ? HIGHLIGHT_EDGE_COLOR : EDGE_COLOR
+          context.moveTo(source.x, source.y)
+          context.lineTo(target.x, target.y)
+          context.stroke()
+        })
+
+        graph.nodes.forEach(({ id, x, y }) => {
+          context.beginPath()
+
+          const isHighlighted = graph
+            .links
+            .some(({ source, target }) => {
+              let peers = [source.id, target.id]
+              if (!peers.includes(id)) {
+                return false
+              }
+
+              if (peers[0] !== id) {
+                peers.reverse()
+              }
+
+              return window.highlight === peers[1]
+            })
+
+          if (id === window.highlight) {
+            context.fillStyle = HIGHLIGHT_NODE_PRIMARY_COLOR
+          } else if (isHighlighted) {
+            context.fillStyle = HIGHLIGHT_NODE_COLOR
+          } else {
+            context.fillStyle = NODE_COLOR
+          }
+
+          context.moveTo(x + 3, y)
+          context.arc(x, y, 3, 0, 2 * Math.PI)
+          context.fill()
+        })
+      }
+
+      function dragsubject() {
+        return simulation.find(d3.event.x, d3.event.y)
+      }
+    })
+
+    function dragstarted() {
+      if (!d3.event.active) simulation.alphaTarget(0.3).restart()
+      d3.event.subject.fx = d3.event.subject.x
+      d3.event.subject.fy = d3.event.subject.y
+    }
+
+    function dragged() {
+      d3.event.subject.fx = d3.event.x
+      d3.event.subject.fy = d3.event.y
+    }
+
+    function dragended() {
+      if (!d3.event.active) simulation.alphaTarget(0)
+      d3.event.subject.fx = null
+      d3.event.subject.fy = null
+    }
+
+    function drawLink(d) {
+      context.moveTo(d.source.x, d.source.y)
+      context.lineTo(d.target.x, d.target.y)
+    }
+
+    function drawNode(d) {
+      context.moveTo(d.x + 3, d.y)
+      context.arc(d.x, d.y, 3, 0, 2 * Math.PI)
+    }
+
+  </script>
 </body>
 
 </html>

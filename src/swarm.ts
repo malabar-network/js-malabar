@@ -1,8 +1,10 @@
 import Bottleneck from 'bottleneck'
 import { Wallet } from 'ethers'
 import { EventEmitter } from 'events'
+import { NewPayloadMessage } from './message'
 import { BootstrapNode, MalabarNode } from './node/index'
-import { pluralizeWithCount } from './util'
+import { solveProofOfEntry } from './proof-of-entry'
+import { findAsync, pluralizeWithCount } from './util'
 
 interface CreateNodesOptions {
   count: number
@@ -15,15 +17,14 @@ export interface NetworkInfoNode {
   label: string
 }
 
-export interface NetworkInfoEdge {
-  from: string
-  to: string
+export interface NetworkInfoLink {
+  source: string
+  target: string
 }
 
 export interface NetworkInfo {
   nodes: NetworkInfoNode[]
-  edges: NetworkInfoEdge[]
-  averagePeers: number
+  links: NetworkInfoLink[]
 }
 
 interface SwarmEvents {
@@ -80,7 +81,7 @@ export class Swarm extends EventEmitter {
           })
 
           if (index % logInterval === 0 && index !== 0) {
-            console.log(`${msg} (${((index / count) * 100).toPrecision(2)}%)`)
+            console.log(`${msg} (${((index / count) * 100).toFixed(0)}%)`)
           }
 
           return node
@@ -107,7 +108,7 @@ export class Swarm extends EventEmitter {
 
           if (index % logInterval === 0 && index !== 0) {
             console.log(
-              `${msg} (${((index / this.nodes.length) * 100).toPrecision(2)}%)`
+              `${msg} (${((index / this.nodes.length) * 100).toFixed(0)}%)`
             )
           }
         })
@@ -118,32 +119,130 @@ export class Swarm extends EventEmitter {
   }
 
   getNetworkInfo(): NetworkInfo {
+    const nodes = this.getNetworkInfoNodes()
+
+    let links: NetworkInfoLink[] = []
+    this.nodes.forEach((node) => {
+      const peers = node.getPeers()
+      peers.forEach((peer) => {
+        links.push({ source: node.getPeerId(), target: peer })
+      })
+    })
+
+    return { nodes, links }
+  }
+
+  async traceRoute(): Promise<NetworkInfo> {
+    const nodes = this.getNetworkInfoNodes()
+
+    const a = this.nodes[0]
+    const b = this.nodes[this.nodes.length - 1]
+
+    const [aAddress, bAddress] = await Promise.all([
+      a.getEthereumAddress(),
+      b.getEthereumAddress(),
+    ])
+
+    return new Promise((resolve, reject) => {
+      b.on('routeMessages', async (messages) => {
+        let links: NetworkInfoLink[] = []
+
+        // Beware, this is far from efficient
+        for (const msg of messages) {
+          await Promise.all(
+            msg.transportNodes.map(async (node, index) => {
+              const malabarNode = await findAsync(this.nodes, async (n) =>
+                (await n.getEthereumAddress()).equals(node.address)
+              )
+
+              if (index === 0) {
+                return links.push({
+                  source: a.getPeerId(),
+                  target: malabarNode.getPeerId(),
+                })
+              }
+
+              const prevMalabarNode = await findAsync(this.nodes, async (n) =>
+                (await n.getEthereumAddress()).equals(
+                  msg.transportNodes[index - 1].address
+                )
+              )
+
+              if (index === msg.transportNodes.length - 1) {
+                links.push({
+                  source: malabarNode.getPeerId(),
+                  target: b.getPeerId(),
+                })
+              }
+
+              links.push({
+                source: prevMalabarNode.getPeerId(),
+                target: malabarNode.getPeerId(),
+              })
+            })
+          )
+        }
+
+        resolve({ nodes, links })
+      })
+
+      a.sendRouteMessage({
+        from: aAddress,
+        to: bAddress,
+        gasLimit: 1e9,
+        gasUsed: 0,
+        messageId:
+          '10c8eee0c9dbe5747ef3eed7bfd61de35bf4c6dd16c8df2986737881f762af40',
+        messageSize: 1024,
+        ttl: 10,
+        transportNodes: [],
+      })
+    })
+  }
+
+  async sendMessage() {
+    const a = this.nodes[0]
+    const b = this.nodes[this.nodes.length - 1]
+
+    const { poe, nonce: poeNonce } = solveProofOfEntry(
+      await a.getEthereumAddress()
+    )
+
+    const msg: NewPayloadMessage = {
+      to: await b.getEthereumAddress(),
+      from: await a.getEthereumAddress(),
+      body: Buffer.from('Hello world!', 'ascii'),
+      maxGas: 1e9,
+      poe,
+      poeNonce,
+    }
+
+    a.sendMessage(msg)
+  }
+
+  private getNetworkInfoNodes(): NetworkInfoNode[] {
     const regularNodes = this.nodes.map((node, index) => ({
       id: node.getPeerId(),
       label: `Node ${index}`,
     }))
 
-    const nodes = [
+    return [
       ...regularNodes,
       { id: this.bootstrapNode.getPeerId(), label: 'Bootstrap Node' },
     ]
-
-    let totalPeers = 0
-
-    let edges: NetworkInfoEdge[] = []
-    this.nodes.forEach((node) => {
-      const peers = node.getPeers()
-      peers.forEach((peer) => {
-        totalPeers++
-        edges.push({ to: peer, from: node.getPeerId() })
-      })
-    })
-
-    return { nodes, edges, averagePeers: totalPeers / this.nodes.length }
   }
 
   private handleReady() {
     this.readyCount++
+
+    if (this.readyCount % 10 === 0) {
+      console.log(
+        `${((this.readyCount / this.nodes.length) * 100).toFixed(
+          0
+        )}% of nodes ready`
+      )
+    }
+
     if (this.readyCount < this.nodes.length) return
 
     this.emit('ready')

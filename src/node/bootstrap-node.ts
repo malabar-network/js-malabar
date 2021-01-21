@@ -4,11 +4,7 @@ import MPLEX from 'libp2p-mplex'
 import { NOISE } from 'libp2p-noise'
 import TCP from 'libp2p-tcp'
 import PeerId from 'peer-id'
-
-export interface BootstrapNodeConfig {
-  listenAddresses: string[]
-}
-
+import { BaseNodeConfig } from './config'
 export class BootstrapNode {
   private node: libp2p
 
@@ -18,7 +14,7 @@ export class BootstrapNode {
 
   // We have to construct the class using a static method
   // as a contructor can not be asycronous at the moment
-  static async new(config: BootstrapNodeConfig): Promise<BootstrapNode> {
+  static async new(config: BaseNodeConfig): Promise<BootstrapNode> {
     const peerId = await PeerId.create()
 
     const node = await libp2p.create({
