@@ -1,5 +1,5 @@
 {
-  "name": "malabar-node",
+  "name": "js-malabar",
   "version": "0.1.0",
   "description": "The JS Malabar node",
   "main": "dist/index.js",
