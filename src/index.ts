@@ -18,9 +18,6 @@ async function main() {
     const network = swarm.getNetworkInfo()
     saveVisualizationFile('network', network)
 
-    // const routes = await swarm.traceRoute()
-    // saveVisualizationFile('route', routes)
-
     await swarm.sendMessage()
   })
 
