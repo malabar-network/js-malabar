@@ -21,7 +21,7 @@ import {
   RouteAckMessage,
   routeAckMessageToBuffer,
   RouteMessage,
-  routeMessageToBuffer,
+  routeMessageToBuffer
 } from '../message'
 import { messageToRouteMessage } from '../util'
 import { BaseNodeConfig } from './config'
@@ -157,7 +157,7 @@ export class MalabarNode extends EventEmitter {
     const routeMsg = messageToRouteMessage(msg)
     this.sendRouteMessage(routeMsg)
 
-    this.outgoingMessages[msg.messageId.toString('hex')] = msg
+    this.outgoingMessages[msg.messageId] = msg
   }
 
   /**
@@ -270,10 +270,8 @@ export class MalabarNode extends EventEmitter {
       return
     }
 
-    const messageId = msg.messageId.toString('hex')
-
-    await this.sendPayloadMessage(msg, this.routeAckMessageOrigins[messageId])
-    delete this.routeAckMessageOrigins[messageId]
+    await this.sendPayloadMessage(msg, this.routeAckMessageOrigins[msg.messageId])
+    delete this.routeAckMessageOrigins[msg.messageId]
   }
 
   /**

@@ -15,7 +15,7 @@ export interface NewPayloadMessage {
 export type PayloadMessage = NewPayloadMessage & {
   time: Date
   usedGas: number
-  messageId: Buffer
+  messageId: string
 }
 
 export function expandMessage(partialMsg: NewPayloadMessage): PayloadMessage {
@@ -36,7 +36,7 @@ export function expandMessage(partialMsg: NewPayloadMessage): PayloadMessage {
 
   return {
     ...msg,
-    messageId: sha256.digest(),
+    messageId: sha256.digest().toString('hex'),
   }
 }
 
@@ -51,7 +51,7 @@ export function messageToBuffer(msg: PayloadMessage): BufferList {
   data.append(intToBuffer(8, Math.floor(msg.time.getTime() / 1000))) // Time - 8 bytes
   data.append(intToBuffer(32, msg.maxGas)) // Maximum Gas - 32 bytes
   data.append(intToBuffer(32, msg.usedGas)) // Used Gas - 32 bytes
-  data.append(msg.messageId) // Message ID - 32 bytes
+  data.append(Buffer.from(msg.messageId, 'hex')) // Message ID - 32 bytes
   data.append(msg.body) // Body - n bytes
 
   return data
@@ -68,7 +68,7 @@ export function bufferToMessage(buf: BufferList): PayloadMessage {
   const time = new Date(bufferToInt(buf.slice(i, (i += 8))) * 1000) // Time - 8 bytes
   const maxGas = bufferToInt(buf.slice(i, (i += 32))) // Maximum Gas - 32 bytes
   const usedGas = bufferToInt(buf.slice(i, (i += 32))) // Used Gas - 32 bytes
-  const messageId = buf.slice(i, (i += 32)) // Message ID - 32 bytes
+  const messageId = buf.slice(i, (i += 32)).toString('hex') // Message ID - 32 bytes
   const body = buf.slice(i) // Body - n bytes
 
   return { to, from, poe, poeNonce, time, maxGas, usedGas, body, messageId }
