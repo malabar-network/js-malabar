@@ -358,7 +358,7 @@ export class MalabarNode extends EventEmitter {
 
       msg.transportNodes.push({
         gasUsed,
-        address: new EthereumAddress(await this.signer.getAddress()),
+        address: await this.getEthereumAddress(),
       })
     }
 
