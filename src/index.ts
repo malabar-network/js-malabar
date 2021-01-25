@@ -18,10 +18,10 @@ async function main() {
     const network = swarm.getNetworkInfo()
     saveVisualizationFile('network', network)
 
-    await swarm.sendMessage()
+    await swarm.sendMessage(Buffer.from('Hello', 'ascii'))
   })
 
-  await swarm.createNodes({ count: 20 })
+  await swarm.createNodes({ count: 60 })
   await swarm.startNodes()
   console.log('Waiting for nodes to be ready...')
 }

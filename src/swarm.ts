@@ -1,10 +1,10 @@
 import Bottleneck from 'bottleneck'
 import { Wallet } from 'ethers'
 import { EventEmitter } from 'events'
-import { NewPayloadMessage } from './message'
+import { expandMessage, NewPayloadMessage, PayloadMessage } from './message'
 import { BootstrapNode, MalabarNode } from './node/index'
 import { solveProofOfEntry } from './proof-of-entry'
-import { findAsync, pluralizeWithCount } from './util'
+import { pluralizeWithCount } from './util'
 
 interface CreateNodesOptions {
   count: number
@@ -90,7 +90,10 @@ export class Swarm extends EventEmitter {
     )
 
     // Register ready event handler
-    this.nodes.forEach((node) => node.on('ready', this.handleReady.bind(this)))
+    this.nodes.forEach((node) => {
+      node.on('ready', this.handleReady.bind(this))
+      node.on('message', this.handleMessage.bind(this))
+    })
 
     console.log(`Created ${pluralizeWithCount(count, 'node')}`)
   }
@@ -132,75 +135,7 @@ export class Swarm extends EventEmitter {
     return { nodes, links }
   }
 
-  async traceRoute(): Promise<NetworkInfo> {
-    const nodes = this.getNetworkInfoNodes()
-
-    const a = this.nodes[0]
-    const b = this.nodes[this.nodes.length - 1]
-
-    const [aAddress, bAddress] = await Promise.all([
-      a.getEthereumAddress(),
-      b.getEthereumAddress(),
-    ])
-
-    return new Promise((resolve, reject) => {
-      b.on('routeMessages', async (messages) => {
-        let links: NetworkInfoLink[] = []
-
-        // Beware, this is far from efficient
-        for (const msg of messages) {
-          await Promise.all(
-            msg.transportNodes.map(async (node, index) => {
-              const malabarNode = await findAsync(this.nodes, async (n) =>
-                (await n.getEthereumAddress()).equals(node.address)
-              )
-
-              if (index === 0) {
-                return links.push({
-                  source: a.getPeerId(),
-                  target: malabarNode.getPeerId(),
-                })
-              }
-
-              const prevMalabarNode = await findAsync(this.nodes, async (n) =>
-                (await n.getEthereumAddress()).equals(
-                  msg.transportNodes[index - 1].address
-                )
-              )
-
-              if (index === msg.transportNodes.length - 1) {
-                links.push({
-                  source: malabarNode.getPeerId(),
-                  target: b.getPeerId(),
-                })
-              }
-
-              links.push({
-                source: prevMalabarNode.getPeerId(),
-                target: malabarNode.getPeerId(),
-              })
-            })
-          )
-        }
-
-        resolve({ nodes, links })
-      })
-
-      a.sendRouteMessage({
-        from: aAddress,
-        to: bAddress,
-        gasLimit: 1e9,
-        gasUsed: 0,
-        messageId:
-          '10c8eee0c9dbe5747ef3eed7bfd61de35bf4c6dd16c8df2986737881f762af40',
-        messageSize: 1024,
-        ttl: 10,
-        transportNodes: [],
-      })
-    })
-  }
-
-  async sendMessage() {
+  async sendMessage(data: Buffer) {
     const a = this.nodes[0]
     const b = this.nodes[this.nodes.length - 1]
 
@@ -208,14 +143,16 @@ export class Swarm extends EventEmitter {
       await a.getEthereumAddress()
     )
 
-    const msg: NewPayloadMessage = {
+    const newMsg: NewPayloadMessage = {
       to: await b.getEthereumAddress(),
       from: await a.getEthereumAddress(),
-      body: Buffer.from('Hello world! '.repeat(10000), 'ascii'),
+      body: data,
       maxGas: 1e9,
       poe,
       poeNonce,
     }
+
+    const msg = expandMessage(newMsg)
 
     a.sendMessage(msg)
   }
@@ -246,5 +183,9 @@ export class Swarm extends EventEmitter {
     if (this.readyCount < this.nodes.length) return
 
     this.emit('ready')
+  }
+
+  private handleMessage(msg: PayloadMessage) {
+    console.log(msg.body.toString('ascii'))
   }
 }

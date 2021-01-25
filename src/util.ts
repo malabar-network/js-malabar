@@ -64,7 +64,7 @@ export function messageToRouteMessage(msg: PayloadMessage): RouteMessage {
     from: msg.from,
     gasLimit: msg.maxGas,
     gasUsed: 0,
-    messageSize: 1000, // TODO: proper message size
+    messageSize: msg.body.length,
     ttl: 10, // TODO: configurable TTL
     transportNodes: [],
   }

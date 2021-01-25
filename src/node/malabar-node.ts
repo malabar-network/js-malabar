@@ -14,9 +14,9 @@ import {
   bufferToMessage,
   bufferToRouteAckMessage,
   bufferToRouteMessage,
-  expandMessage,
+
   messageToBuffer,
-  NewPayloadMessage,
+
   PayloadMessage,
   RouteAckMessage,
   routeAckMessageToBuffer,
@@ -46,6 +46,7 @@ interface MalabarNodeEvents {
   ready: () => void
   connection: (remoteAddress: string) => void
   routeMessages: (messages: RouteMessage[]) => void
+  message: (msg: PayloadMessage) => void
 }
 
 // From https://stackoverflow.com/a/61609010
@@ -152,8 +153,7 @@ export class MalabarNode extends EventEmitter {
   /**
    * Send a message
    */
-  async sendMessage(newMsg: NewPayloadMessage, exclude: PeerId[] = []) {
-    const msg = expandMessage(newMsg)
+  async sendMessage(msg: PayloadMessage, exclude: PeerId[] = []) {
     const routeMsg = messageToRouteMessage(msg)
     this.sendRouteMessage(routeMsg)
 
@@ -266,7 +266,7 @@ export class MalabarNode extends EventEmitter {
     connection: Connection
   ) {
     if (msg.to.equals(await this.getEthereumAddress())) {
-      console.log(msg.body.toString('ascii'))
+      this.emit('message', msg)
       return
     }
 
@@ -435,6 +435,7 @@ export class MalabarNode extends EventEmitter {
     msg: RouteAckMessage,
     connection: Connection
   ) {
+    // Check if we are the recipient of this message
     if (Object.keys(this.outgoingMessages).includes(msg.messageId)) {
       this.sendPayloadMessage(
         this.outgoingMessages[msg.messageId],
