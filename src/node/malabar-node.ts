@@ -365,7 +365,7 @@ export class MalabarNode extends EventEmitter {
     this.routeMessageOrigins[msg.messageId] = connection.remotePeer
 
     msg.ttl--
-    if (msg.ttl === 0) return
+    if (msg.ttl <= 0) return
 
     this.sendRouteMessage(msg, [connection.remotePeer])
   }
