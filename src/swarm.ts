@@ -211,7 +211,7 @@ export class Swarm extends EventEmitter {
     const msg: NewPayloadMessage = {
       to: await b.getEthereumAddress(),
       from: await a.getEthereumAddress(),
-      body: Buffer.from('Hello world!', 'ascii'),
+      body: Buffer.from('Hello world! '.repeat(10000), 'ascii'),
       maxGas: 1e9,
       poe,
       poeNonce,

@@ -59,7 +59,7 @@ export async function findAsync<T>(arr: T[], predicate: FindAsyncPredicate<T>) {
 
 export function messageToRouteMessage(msg: PayloadMessage): RouteMessage {
   return {
-    messageId: msg.messageId.toString('hex'),
+    messageId: msg.messageId,
     to: msg.to,
     from: msg.from,
     gasLimit: msg.maxGas,
