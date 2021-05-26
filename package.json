@@ -19,17 +19,17 @@
   "dependencies": {
     "bl": "^4.0.3",
     "bottleneck": "^2.19.5",
-    "elliptic": "^6.5.3",
-    "ethers": "^5.0.26",
+    "elliptic": "^6.5.4",
+    "ethers": "^5.2.0",
     "it-pipe": "^1.1.0",
-    "libp2p": "^0.30.0",
+    "libp2p": "^0.31.5",
     "libp2p-bootstrap": "^0.12.1",
     "libp2p-gossipsub": "^0.8.0",
-    "libp2p-kad-dht": "^0.20.4",
+    "libp2p-kad-dht": "^0.22.0",
     "libp2p-mplex": "^0.10.1",
-    "libp2p-noise": "^2.0.1",
+    "libp2p-noise": "^3.0.0",
     "libp2p-tcp": "^0.15.2",
-    "peer-id": "^0.14.2",
+    "peer-id": "^0.14.8",
     "promise-limit": "^2.7.0",
     "trezor-connect": "^8.1.19-extended"
   }

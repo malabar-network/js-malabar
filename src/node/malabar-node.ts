@@ -14,14 +14,12 @@ import {
   bufferToMessage,
   bufferToRouteAckMessage,
   bufferToRouteMessage,
-
   messageToBuffer,
-
   PayloadMessage,
   RouteAckMessage,
   routeAckMessageToBuffer,
   RouteMessage,
-  routeMessageToBuffer
+  routeMessageToBuffer,
 } from '../message'
 import { messageToRouteMessage } from '../util'
 import { BaseNodeConfig } from './config'
@@ -120,8 +118,7 @@ export class MalabarNode extends EventEmitter {
           randomWalk: {
             enabled: true,
             interval: 300e3, // 300 seconds
-            timeout: 10e3, // 10 seconds,
-            delay: 1e3, // 1 seconds
+            timeout: 10e3, // 10 seconds
           },
         },
         peerDiscovery: {
@@ -270,7 +267,10 @@ export class MalabarNode extends EventEmitter {
       return
     }
 
-    await this.sendPayloadMessage(msg, this.routeAckMessageOrigins[msg.messageId])
+    await this.sendPayloadMessage(
+      msg,
+      this.routeAckMessageOrigins[msg.messageId]
+    )
     delete this.routeAckMessageOrigins[msg.messageId]
   }
 
